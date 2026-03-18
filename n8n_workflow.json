@@ -1,0 +1,207 @@
+{
+  "name": "Raw Content → Branded PDF (Anuj Jindal)",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "trigger-manual",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ──────────────────────────────────────────────────────────────────\n// Node: Set Configuration\n// Purpose: Central place for all brand / path settings.\n// ──────────────────────────────────────────────────────────────────\nconst config = {\n  subject:        'Economic and Social Issues',\n  chapter:        'Economic Growth and Development',\n  phone:          '+91 9999466225',\n  website:        'www.anujjindal.in',\n  blueColour:     '#1B71AC',\n  greenColour:    '#2AB573',\n  headerLogoUrl:  'https://anujjindal.in/wp-content/uploads/2022/05/LOGO-FULL-01.png',\n  watermarkUrl:   'https://anujjindal.in/wp-content/uploads/2023/02/LOGO-CROP.png',\n  // Absolute path to the folder that contains generate_pdf.py AND the PNG images\n  workDir:        '/data/workflows/economic-notes',\n  outputFilename: 'Economic_Growth_and_Development.pdf',\n};\n\nreturn [{ json: config }];\n"
+      },
+      "id": "set-config",
+      "name": "Set Configuration",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.headerLogoUrl }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
+        }
+      },
+      "id": "fetch-header-logo",
+      "name": "Fetch Header Logo",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [680, 180]
+    },
+    {
+      "parameters": {
+        "url": "={{ $('Set Configuration').item.json.watermarkUrl }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
+        }
+      },
+      "id": "fetch-watermark",
+      "name": "Fetch Watermark Logo",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [680, 420]
+    },
+    {
+      "parameters": {
+        "mode": "mergeByPosition",
+        "options": {}
+      },
+      "id": "merge-logos",
+      "name": "Merge Logo Fetches",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 2.1,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ──────────────────────────────────────────────────────────────────\n// Node: Prepare Python Command\n// Assembles the shell command that will invoke generate_pdf.py\n// ──────────────────────────────────────────────────────────────────\nconst cfg   = $('Set Configuration').item.json;\nconst outPath = `${cfg.workDir}/${cfg.outputFilename}`;\n\nconst cmd = [\n  'python3',\n  `\"${cfg.workDir}/generate_pdf.py\"`,\n  `--output \"${outPath}\"`,\n  `--img-dir \"${cfg.workDir}\"`,\n].join(' ');\n\nreturn [{ json: { ...cfg, cmd, outPath } }];\n"
+      },
+      "id": "prepare-command",
+      "name": "Prepare Python Command",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "command": "={{ $json.cmd }}"
+      },
+      "id": "run-python",
+      "name": "Run generate_pdf.py",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [1340, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ──────────────────────────────────────────────────────────────────\n// Node: Check Result\n// Validates the shell command succeeded and formats a status report.\n// ──────────────────────────────────────────────────────────────────\nconst exitCode = $input.item.json.exitCode;\nconst stdout   = $input.item.json.stdout || '';\nconst stderr   = $input.item.json.stderr || '';\nconst cfg      = $('Prepare Python Command').item.json;\n\nif (exitCode !== 0) {\n  throw new Error(`PDF generation failed (exit ${exitCode}):\\n${stderr}`);\n}\n\nreturn [{\n  json: {\n    success:    true,\n    outputPath: cfg.outPath,\n    message:    stdout.trim(),\n    subject:    cfg.subject,\n    chapter:    cfg.chapter,\n    timestamp:  new Date().toISOString(),\n  }\n}];\n"
+      },
+      "id": "check-result",
+      "name": "Check Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1560, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-success",
+              "leftValue": "={{ $json.success }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-success",
+      "name": "Success?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1780, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ──────────────────────────────────────────────────────────────────\n// Node: Success Summary\n// Emits a clean summary JSON for downstream nodes / webhooks.\n// ──────────────────────────────────────────────────────────────────\nconst d = $input.item.json;\nreturn [{\n  json: {\n    status:     'SUCCESS',\n    pdf:        d.outputPath,\n    subject:    d.subject,\n    chapter:    d.chapter,\n    generatedAt: d.timestamp,\n    note:       'PDF ready for download / email / upload.',\n  }\n}];\n"
+      },
+      "id": "success-summary",
+      "name": "Success Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2000, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ──────────────────────────────────────────────────────────────────\n// Node: Error Handler\n// Formats the error into a structured response.\n// ──────────────────────────────────────────────────────────────────\nconst errMsg = $input.item.json.error?.message\n               || 'Unknown error in PDF generation';\nreturn [{\n  json: {\n    status:    'FAILED',\n    error:     errMsg,\n    timestamp: new Date().toISOString(),\n  }\n}];\n"
+      },
+      "id": "error-handler",
+      "name": "Error Handler",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2000, 400]
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [{ "node": "Set Configuration", "type": "main", "index": 0 }]
+      ]
+    },
+    "Set Configuration": {
+      "main": [
+        [
+          { "node": "Fetch Header Logo",   "type": "main", "index": 0 },
+          { "node": "Fetch Watermark Logo","type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Fetch Header Logo": {
+      "main": [
+        [{ "node": "Merge Logo Fetches", "type": "main", "index": 0 }]
+      ]
+    },
+    "Fetch Watermark Logo": {
+      "main": [
+        [{ "node": "Merge Logo Fetches", "type": "main", "index": 1 }]
+      ]
+    },
+    "Merge Logo Fetches": {
+      "main": [
+        [{ "node": "Prepare Python Command", "type": "main", "index": 0 }]
+      ]
+    },
+    "Prepare Python Command": {
+      "main": [
+        [{ "node": "Run generate_pdf.py", "type": "main", "index": 0 }]
+      ]
+    },
+    "Run generate_pdf.py": {
+      "main": [
+        [{ "node": "Check Result", "type": "main", "index": 0 }]
+      ]
+    },
+    "Check Result": {
+      "main": [
+        [{ "node": "Success?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Success?": {
+      "main": [
+        [{ "node": "Success Summary", "type": "main", "index": 0 }],
+        [{ "node": "Error Handler",   "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 0,
+  "updatedAt": "2026-01-01T00:00:00.000Z",
+  "versionId": "1"
+}
